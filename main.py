@@ -56,7 +56,7 @@ class DQN:
 
     def get_epsilon(self):
         # TODO() decay epsilon
-        return 0.05
+        return 0.2
 
     def get_action_values(self, model, observation):
         return model.predict(np.array(observation).reshape(1,2))[0]
@@ -95,15 +95,13 @@ class DQN:
             # Store each experience
             experience = Experience(initial_observation, action, reward, observation, done)
             self.experiences.append(experience)
-
             self.update_model()
-            
             if done:
                 self.sum_steps_per_episode += i
                 self.num_episodes += 1
-
-        avg_steps =  self.sum_steps_per_episode / float(self.num_episodes)
-        print('Done!', avg_steps)
+                avg_steps =  self.sum_steps_per_episode / float(self.num_episodes)
+                print('Done! This episode complete in', i, 'the new average is', avg_steps)
+                return
 
     def update_model(self):
         if self.num_episodes < 1:
@@ -118,7 +116,7 @@ class DQN:
         ys = np.array(mini_batch_ys)
         # print('xs', xs, 'with shape:', xs.shape)
         # print('ys', ys, 'with shape:', ys.shape)
-        self.model.fit(xs, ys)
+        self.model.fit(xs, ys, verbose=0) # disable logging
         self.updates_applied += 1
         if self.updates_applied == self.updates_per_freeze:
             self.updates_applied = 0
@@ -134,19 +132,29 @@ class DQN:
             future_reward = max(q_hat_action_values)
             discounted_future_reward = self.gamma * future_reward
             target += discounted_future_reward
-        print('before', q_action_values, 'target:', target)
+        # print('before', q_action_values, 'target:', target)
         q_action_values[experience.action] = target
-        print('after', q_action_values)
+        # print('after', q_action_values)
         return q_action_values
 
     def freeze_model(self):
         copy_of_model = tf.keras.models.clone_model(self.model)
         copy_of_model.set_weights(self.model.get_weights())
         self.frozen_model = copy_of_model
+        # for debugging, display the policy
+        for i in range(-24, 12):
+            row_string = ''
+            for j in range(-28, 32):
+                test_observation = [i * 0.05, j * 0.0025]
+                prediction = self.get_action_values(self.frozen_model, test_observation)
+                action = get_index_of_max(prediction)
+                # action = human_policy(test_observation)
+                row_string += str(action)
+            print(row_string)
 
 def main():
     gamma = 0.99
-    updates_per_freeze = 500
+    updates_per_freeze = 3000
     dqn = DQN(gamma, updates_per_freeze)
     for i in range(100):
         dqn.sample_episode()
