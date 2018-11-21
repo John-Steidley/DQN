@@ -56,10 +56,11 @@ class DQN:
 
     def get_epsilon(self):
         # TODO() decay epsilon
-        return 0.2
+        return 0.25
 
     def get_action_values(self, model, observation):
-        return model.predict(np.array(observation).reshape(1,2))[0]
+        reshaped = np.array(observation).reshape(1,2)
+        return model.predict(reshaped)[0]
 
     def get_action(self, observation):
         epsilon = self.get_epsilon()
@@ -67,18 +68,16 @@ class DQN:
         # Take a random action if less than epsilon
         # Note, neural network output values corrrespond to action indices
         if rand_number < epsilon:
-            # print('random action')
             return self.env.action_space.sample()        
         else:
             action_values = self.get_action_values(self.model, observation)
-            # print('action values', action_values, 'for', observation)
             # TODO() revisit to consider fewer forward passes
             return get_index_of_max(action_values)
 
     def sample_episode(self):
         observation = self.env.reset()
         # TODO() experiment with number of steps
-        max_steps = 500
+        max_steps = 1000
         for i in range(1, max_steps + 1):
             self.env.render()
             # action = human_policy(observation)
@@ -104,7 +103,7 @@ class DQN:
                 return
 
     def update_model(self):
-        if self.num_episodes < 5:
+        if self.num_episodes < 1:
             return
         # Sample items from the experience buffer at random
         batch_of_experiences = random.sample(self.experiences, 32)
@@ -116,7 +115,10 @@ class DQN:
         ys = np.array(mini_batch_ys)
         # print('xs', xs, 'with shape:', xs.shape)
         # print('ys', ys, 'with shape:', ys.shape)
-        self.model.fit(xs, ys, verbose=0) # disable logging
+        make_verbose = 0
+        if random.randint(0, 500) == 500:
+            make_verbose = 1
+        self.model.fit(xs, ys, verbose=make_verbose) # disable logging
         self.updates_applied += 1
         if self.updates_applied == self.updates_per_freeze:
             self.updates_applied = 0
@@ -132,29 +134,35 @@ class DQN:
             future_reward = max(q_hat_action_values)
             discounted_future_reward = self.gamma * future_reward
             target += discounted_future_reward
-        # print('before', q_action_values, 'target:', target)
+        # random_number_for_controlling_logging = random.randint(0, 2000)
+        # if random_number_for_controlling_logging == 0:
+        #     print('q:', q_action_values, 'q_hat:', q_hat_action_values, 'target:', target, 'old_observation:', experience.old_observation, 'new_observation', experience.new_observation)
         q_action_values[experience.action] = target
-        # print('after', q_action_values)
         return q_action_values
 
     def freeze_model(self):
-        copy_of_model = tf.keras.models.clone_model(self.model)
-        copy_of_model.set_weights(self.model.get_weights())
-        self.frozen_model = copy_of_model
+        # HACK:
+        self.frozen_model = self.model
+        # copy_of_model = tf.keras.models.clone_model(self.model)
+        # copy_of_model.set_weights(self.model.get_weights())
+        # self.frozen_model = copy_of_model
         # for debugging, display the policy
-        for i in range(-24, 12):
-            row_string = ''
-            for j in range(-28, 32):
-                test_observation = [i * 0.05, j * 0.0025]
-                prediction = self.get_action_values(self.frozen_model, test_observation)
-                action = get_index_of_max(prediction)
-                # action = human_policy(test_observation)
-                row_string += str(action)
-            print(row_string)
+        if random.randint(0, 5000) == 0:
+            print('Showing the policy of the frozen network')
+            for i in range(-12, 6):
+                row_string = ''
+                for j in range(-7, 8):
+                    test_observation = [i * 0.1, j * 0.01]
+                    prediction = self.get_action_values(self.frozen_model, test_observation)
+                    action = get_index_of_max(prediction)
+                    # action = human_policy(test_observation)
+                    row_string += str(action)
+                print(row_string)
 
 def main():
-    gamma = 0.99
-    updates_per_freeze = 3000
+    # gamma = 0.99
+    gamma = 1.0
+    updates_per_freeze = 1
     dqn = DQN(gamma, updates_per_freeze)
     while True:
         dqn.sample_episode()
