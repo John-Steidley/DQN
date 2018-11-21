@@ -134,7 +134,7 @@ class DQN:
             discounted_future_reward = self.gamma * future_reward
             target += discounted_future_reward
         print('before', q_action_values, 'target:', target)
-        q_action_values[experience.action] = target - q_action_values[experience.action]
+        q_action_values[experience.action] = target
         print('after', q_action_values)
         return q_action_values
 
