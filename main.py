@@ -16,7 +16,8 @@ Experience = namedtuple('Experience', [
 
 def init_model():
     model = tf.keras.models.Sequential([
-        tf.keras.layers.Dense(3, input_shape=(2,))
+        tf.keras.layers.Dense(8, activation = 'relu', input_shape=(2,)),
+        tf.keras.layers.Dense(3)
     ])
     # TODO: Consider switching to RMSProp to match the paper
     model.compile(optimizer='SGD', loss='mean_squared_error')
