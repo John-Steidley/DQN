@@ -100,13 +100,13 @@ class DQN:
                 self.sum_steps_per_episode += i
                 self.num_episodes += 1
                 avg_steps =  self.sum_steps_per_episode / float(self.num_episodes)
-                print('Done! This episode complete in', i, 'the new average is', avg_steps)
+                print('Episode', self.num_episodes, 'complete in', i, 'steps. New step average', avg_steps)
                 return
 
     def update_model(self):
-        if self.num_episodes < 1:
+        if self.num_episodes < 5:
             return
-        # Sample 32 items from the experience buffer at random
+        # Sample items from the experience buffer at random
         batch_of_experiences = random.sample(self.experiences, 32)
         mini_batch_xs = list(map(lambda x: x.old_observation, batch_of_experiences))
         # evaluate using the frozen model
@@ -124,7 +124,7 @@ class DQN:
 
     # TODO: Debug me, probabaly
     def transform_experience_into_training_point(self, experience):
-        # WTF should this be named, really?
+        # WTF should q_action_values be named, really?
         q_action_values = self.get_action_values(self.model, experience.old_observation)
         target = experience.reward
         if not experience.done:
@@ -156,7 +156,7 @@ def main():
     gamma = 0.99
     updates_per_freeze = 3000
     dqn = DQN(gamma, updates_per_freeze)
-    for i in range(100):
+    while True:
         dqn.sample_episode()
 
 
