@@ -43,13 +43,13 @@ def init_model():
     """Create a neural network to predict the action-values for each action
     given the observations (position, velocity).
     """
+    # Weights are initialized using glorot_normal by default.
     model = tf.keras.models.Sequential([
         tf.keras.layers.Dense(8, activation = 'relu', input_shape=(2,)),
         tf.keras.layers.Dense(3)
     ])
     
     # TODO: Consider switching to RMSProp to match the paper
-    # Compiles to 
     model.compile(optimizer='SGD', loss='mean_squared_error')
     return model
 
@@ -71,12 +71,6 @@ def get_index_of_max(values):
     # Ignore the max, the second variable returned
     index, _ = max(enumerate(values), key=operator.itemgetter(1))
     return index
-
-
-def log_random(n, string):
-    if random.randint(0, n) == 0:
-        logging.debug(string)
-
 
 
 class DQN:
@@ -112,7 +106,7 @@ class DQN:
         self.env = gym.make("MountainCar-v0")
         self.goal_position = 0.5
         self.experiences = []
-        self.experiences_per_train = 32
+        self.experiences_per_train = 3
         self.max_steps = 200
         self.sum_steps = 0
         self.num_episodes = 0
@@ -120,7 +114,8 @@ class DQN:
 
     def get_action_values(self, model, observation):
         # Reshape the observation to be num_samples X num_inputs
-        reshaped = np.array(observation).reshape(1,2)
+        normalized = [observation[0] + .5, observation[1] * 15]
+        reshaped = np.array(normalized).reshape(1,2)
         return model.predict(reshaped)[0]
 
     def get_action(self, observation):
@@ -134,7 +129,20 @@ class DQN:
             action_values = self.get_action_values(self.model, observation)
             # Note, neural network output values corrrespond to action indices.
             # TODO: revisit to consider fewer forward passes.
+            # return human_policy(observation)
             return get_index_of_max(action_values)
+
+    def log_max_action_values(self):
+        """Display the policy for debugging purposes."""
+        for i in range(-12, 6):
+            row_string = ''
+            for j in range(-7, 8):
+                test_observation = [i * 0.1, j * 0.01]
+                prediction = self.get_action_values(self.frozen_model, test_observation)
+                action = get_index_of_max(prediction)
+                # action = human_policy(test_observation)
+                row_string += str(action)
+            logging.debug(row_string)
 
     def sample_episode(self):
         """Take an action given the policy, store the experience,
@@ -145,6 +153,7 @@ class DQN:
             if self.render:
                 self.env.render()
 
+            # action = human_policy(observation)
             action = self.get_action(observation)
             # The last variable, info, is always {}.
             # The second to last variable, done, is degenerate.
@@ -162,41 +171,54 @@ class DQN:
                                     observation,
                                     found_goal)
             self.experiences.append(experience)
-            self.train_model()
-            self.updates_applied += 1
-            if self.updates_applied == self.updates_per_freeze:
-                self.updates_applied = 0
-                self.freeze_model()
+            
+            if not found_goal and step < self.max_steps:
+                self.train_model(verbose=False)
+                self.updates_applied += 1
+                if self.updates_applied == self.updates_per_freeze:
+                    self.updates_applied = 0
+                    self.freeze_model()
 
             # Terminate the episode if we've found the goal
-            if found_goal or step == self.max_steps:
+            else:
+                # Print out the loss at the end of every episode.
+                self.train_model(verbose=True)
+
                 # Log the average number of steps to complete the episode.
                 self.sum_steps += step
                 self.num_episodes += 1
                 avg_steps =  self.sum_steps / self.num_episodes
                 logging.debug('Episode {} complete in {} steps. New step average {}'
                              .format(self.num_episodes, step, avg_steps))
+                break
 
-    def train_model(self):
+        # self.log_max_action_values()
+        num_experiences = len(self.experiences)
+        # Make experiences max size 1000
+        if num_experiences > 1000:
+            self.experiences = self.experiences[num_experiences - 1000:]
+
+    def train_model(self, verbose=False):
         """Train on samples from the experience buffer."""
         # if self.num_episodes < 1:
-        #     return
+            # return
         # Sample items from the experience buffer at random.
         # batch_of_experiences = random.sample(self.experiences, self.experiences_per_train)
         batch_of_experiences = [self.experiences[-1]]
         mini_batch_xs = list(map(lambda x: x.old_observation, batch_of_experiences))
 
-        # For each experience, calculate the target based on the frozen model. 
-        mini_batch_ys = list(map(self.calculate_targets, batch_of_experiences))
+        # For each experience, calculate the target based on the frozen model.
+        mini_batch_ys = list(map(lambda i_el: self.calculate_targets(i_el[1],
+                                              verbose=(verbose and i_el[0] == 0)),
+                                 enumerate(batch_of_experiences)))
         xs = np.array(mini_batch_xs)
         ys = np.array(mini_batch_ys)
 
         # Occasionally log model training results.
-        make_verbose = 0 if random.randint(0, 500) == 500 else 1
-        self.model.fit(xs, ys, verbose=make_verbose)
+        self.model.fit(xs, ys, verbose=int(verbose))
         
     # TODO: Debug me, probabaly
-    def calculate_targets(self, experience):
+    def calculate_targets(self, experience, verbose=False):
         """Make an update to the action-value based on the reward from one step."""
         # TODO: what should q_action_values be named, really?
         q_action_values = self.get_action_values(self.model, experience.old_observation)
@@ -207,10 +229,10 @@ class DQN:
             future_reward = max(q_hat_action_values)
             discounted_future_reward = self.discount_rate * future_reward
             target += discounted_future_reward
-
-        log_random(2000, 'q: {}, q_hat: {}, target: {}, old_obs: {}, new_obs: {}'
-                         .format(q_action_values, q_hat_action_values, target,
-                                 experience.old_observation, experience.new_observation))
+            if verbose:
+                logging.debug('q: {}, q_hat: {}, target: {}, old_obs: {}, new_obs: {}'
+                             .format(q_action_values, q_hat_action_values, target,
+                                     experience.old_observation, experience.new_observation))
         # Set the action-value of the action that was taken to the target.
         # The other two action-values are not changed, resulting in 0 error for those actions.
         q_action_values[experience.action] = target
@@ -224,21 +246,8 @@ class DQN:
         # copy_of_model.set_weights(self.model.get_weights())
         # self.frozen_model = copy_of_model
 
-        # Display the policy for debugging purposes.
-        if random.randint(0, 500) == 0:
-            logging.debug('Showing the policy of the frozen network')
-            for i in range(-12, 6):
-                row_string = ''
-                for j in range(-7, 8):
-                    test_observation = [i * 0.1, j * 0.01]
-                    prediction = self.get_action_values(self.frozen_model, test_observation)
-                    action = get_index_of_max(prediction)
-                    # action = human_policy(test_observation)
-                    row_string += str(action)
-                logging.debug(row_string)
-
 def main():
-    discount_rate = 0.99
+    discount_rate = 1
     epsilon = 0
     updates_per_freeze = 1
     dqn = DQN(discount_rate, epsilon, updates_per_freeze, render=False)
