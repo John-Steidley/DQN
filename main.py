@@ -49,8 +49,13 @@ def init_model():
         tf.keras.layers.Dense(3)
     ])
     
+    # After 100 episodes, have lr of .001.
+    lr_decay = .009/200000
+    optimizer = tf.keras.optimizers.SGD(lr=0.01, decay=lr_decay)
     # TODO: Consider switching to RMSProp to match the paper
-    model.compile(optimizer='SGD', loss='mean_squared_error')
+    # optimizer = tf.keras.optimizers.RMSprop()
+    # Defaults to lr=0.001, rho=0.9, epsilon=None, decay=0.0
+    model.compile(optimizer=optimizer, loss='mean_squared_error')
     return model
 
 
@@ -106,15 +111,18 @@ class DQN:
         self.env = gym.make("MountainCar-v0")
         self.goal_position = 0.5
         self.experiences = []
-        self.experiences_per_train = 3
+        self.experiences_per_train = 5
         self.max_steps = 200
         self.sum_steps = 0
         self.num_episodes = 0
         self.updates_applied = 0
 
+    def normalize(self, observation):
+        return [observation[0] + .5, observation[1] * 15]
+    
     def get_action_values(self, model, observation):
         # Reshape the observation to be num_samples X num_inputs
-        normalized = [observation[0] + .5, observation[1] * 15]
+        normalized = self.normalize(observation)
         reshaped = np.array(normalized).reshape(1,2)
         return model.predict(reshaped)[0]
 
@@ -153,7 +161,10 @@ class DQN:
             if self.render:
                 self.env.render()
 
-            # action = human_policy(observation)
+            # The model learns faster if given a little help :)
+            # if self.num_episodes % 5 == 0:
+            #     action = human_policy(observation)
+            # else:
             action = self.get_action(observation)
             # The last variable, info, is always {}.
             # The second to last variable, done, is degenerate.
@@ -192,20 +203,22 @@ class DQN:
                              .format(self.num_episodes, step, avg_steps))
                 break
 
-        # self.log_max_action_values()
         num_experiences = len(self.experiences)
         # Make experiences max size 1000
         if num_experiences > 1000:
             self.experiences = self.experiences[num_experiences - 1000:]
+        if self.num_episodes % 10 == 0:
+            self.log_max_action_values()
 
     def train_model(self, verbose=False):
         """Train on samples from the experience buffer."""
-        # if self.num_episodes < 1:
-            # return
+        if self.num_episodes < 1:
+            return
+
         # Sample items from the experience buffer at random.
-        # batch_of_experiences = random.sample(self.experiences, self.experiences_per_train)
-        batch_of_experiences = [self.experiences[-1]]
-        mini_batch_xs = list(map(lambda x: x.old_observation, batch_of_experiences))
+        batch_of_experiences = random.sample(self.experiences, self.experiences_per_train)
+        # batch_of_experiences = [self.experiences[-1]]
+        mini_batch_xs = list(map(lambda x: self.normalize(x.old_observation), batch_of_experiences))
 
         # For each experience, calculate the target based on the frozen model.
         mini_batch_ys = list(map(lambda i_el: self.calculate_targets(i_el[1],
@@ -247,7 +260,7 @@ class DQN:
         # self.frozen_model = copy_of_model
 
 def main():
-    discount_rate = 1
+    discount_rate = 0.99
     epsilon = 0
     updates_per_freeze = 1
     dqn = DQN(discount_rate, epsilon, updates_per_freeze, render=False)
