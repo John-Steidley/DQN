@@ -3,6 +3,7 @@
 """Implement the DQN model.
 
 Currently implemented on the Mountain Car V-0 environment.
+https://github.com/openai/gym/blob/master/gym/envs/classic_control/mountain_car.py
 
 Actions:
     0 is accelerate backwards
@@ -10,11 +11,11 @@ Actions:
     2 is accelerate forward
 
 State:
-    position
-    velocity
+    position: -1.2 - .6
+              The bottom of the valley is at position -pi/6 ~= -0.52359.
+              The top of the hill w/ the goal is at position pi/6 ~= 0.52359.
+    velocity: -.07 - .07
 
-Misc:
-    Zero acceleration at pi/6 ~= 0.52359.
 """
 from collections import namedtuple
 import logging
@@ -50,7 +51,7 @@ def init_model():
     ])
     
     # After 100 episodes, have lr of .001.
-    lr_decay = .009/200000
+    lr_decay = .009/20000
     optimizer = tf.keras.optimizers.SGD(lr=0.01, decay=lr_decay)
     # TODO: Consider switching to RMSProp to match the paper
     # optimizer = tf.keras.optimizers.RMSprop()
@@ -118,6 +119,7 @@ class DQN:
         self.updates_applied = 0
 
     def normalize(self, observation):
+        """TODO: normalize percisely using env state space."""
         return [observation[0] + .5, observation[1] * 15]
     
     def get_action_values(self, model, observation):
@@ -137,15 +139,14 @@ class DQN:
             action_values = self.get_action_values(self.model, observation)
             # Note, neural network output values corrrespond to action indices.
             # TODO: revisit to consider fewer forward passes.
-            # return human_policy(observation)
             return get_index_of_max(action_values)
 
     def log_max_action_values(self):
         """Display the policy for debugging purposes."""
-        for i in range(-12, 6):
+        for position in range(-12, 7):
             row_string = ''
-            for j in range(-7, 8):
-                test_observation = [i * 0.1, j * 0.01]
+            for velocity in range(-7, 8):
+                test_observation = [position * 0.1, velocity * 0.01]
                 prediction = self.get_action_values(self.frozen_model, test_observation)
                 action = get_index_of_max(prediction)
                 # action = human_policy(test_observation)
