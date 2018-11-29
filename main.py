@@ -106,6 +106,7 @@ class DQN:
         self.model = init_model()
         self.frozen_model = None
         self.freeze_model()
+        self.log_max_action_values()
 
         # When true, visualizes the agent in the environment
         self.render = render
