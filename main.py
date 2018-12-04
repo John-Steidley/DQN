@@ -46,13 +46,13 @@ def init_model():
     """
     # Weights are initialized using glorot_normal by default.
     model = tf.keras.models.Sequential([
-        tf.keras.layers.Dense(8, activation = 'relu', input_shape=(2,)),
+        tf.keras.layers.Dense(8, activation = 'hard_sigmoid', input_shape=(2,)),
         tf.keras.layers.Dense(3)
     ])
     
     # After 100 episodes, have lr of .001.
-    lr_decay = .009/20000
-    optimizer = tf.keras.optimizers.SGD(lr=0.01, decay=lr_decay)
+    # lr_decay = .009/20000 # which is 4.5e-7
+    optimizer = tf.keras.optimizers.SGD(lr=1e-3)
     # TODO: Consider switching to RMSProp to match the paper
     # optimizer = tf.keras.optimizers.RMSprop()
     # Defaults to lr=0.001, rho=0.9, epsilon=None, decay=0.0
@@ -88,7 +88,7 @@ class DQN:
     2. Experience replay: We update from random experiences.
     3. Fixed Q targets: We hold the Q target constant for n steps.
     """
-    def __init__(self, discount_rate, epsilon, updates_per_freeze, render):
+    def __init__(self, discount_rate, epsilon, updates_per_freeze, policy_log_frequency, render_frequency):
         # Future rewards for 1 step in the future are valued at
         # discount_rate * reward.
         assert(discount_rate > 0 and discount_rate <= 1)
@@ -106,10 +106,10 @@ class DQN:
         self.model = init_model()
         self.frozen_model = None
         self.freeze_model()
-        self.log_max_action_values()
+        self.log_policy()
 
-        # When true, visualizes the agent in the environment
-        self.render = render
+        self.policy_log_frequency = policy_log_frequency
+        self.render_frequency = render_frequency
         self.env = gym.make("MountainCar-v0")
         self.goal_position = 0.5
         self.experiences = []
@@ -142,13 +142,20 @@ class DQN:
             # TODO: revisit to consider fewer forward passes.
             return get_index_of_max(action_values)
 
-    def log_max_action_values(self):
+    def log_policy(self):
+        logging.debug("Left-Right is position, higher is greater forward velocity, lower is greater backward velocity")
+        logging.debug("Displaying the current model's policy:")
+        self.log_policy_for_model(self.model)
+        logging.debug("Displaying the frozen model's policy:")
+        self.log_policy_for_model(self.frozen_model)
+
+    def log_policy_for_model(self, model):
         """Display the policy for debugging purposes."""
-        for position in range(-12, 7):
+        for velocity in reversed(range(-7, 8)):
             row_string = ''
-            for velocity in range(-7, 8):
+            for position in range(-12, 7):
                 test_observation = [position * 0.1, velocity * 0.01]
-                prediction = self.get_action_values(self.frozen_model, test_observation)
+                prediction = self.get_action_values(model, test_observation)
                 action = get_index_of_max(prediction)
                 # action = human_policy(test_observation)
                 row_string += str(action)
@@ -160,7 +167,7 @@ class DQN:
         """
         observation = self.env.reset()
         for step in range(1, self.max_steps + 1):
-            if self.render:
+            if self.num_episodes % self.render_frequency == 0:
                 self.env.render()
 
             # The model learns faster if given a little help :)
@@ -209,8 +216,8 @@ class DQN:
         # Make experiences max size 1000
         if num_experiences > 1000:
             self.experiences = self.experiences[num_experiences - 1000:]
-        if self.num_episodes % 10 == 0:
-            self.log_max_action_values()
+        if self.num_episodes % self.policy_log_frequency == 0:
+            self.log_policy()
 
     def train_model(self, verbose=False):
         """Train on samples from the experience buffer."""
@@ -255,17 +262,18 @@ class DQN:
 
     def freeze_model(self):
         """Make a copy of the model."""
-        # TODO: HACK, setting frozen model to current model
-        self.frozen_model = self.model
-        # copy_of_model = tf.keras.models.clone_model(self.model)
-        # copy_of_model.set_weights(self.model.get_weights())
-        # self.frozen_model = copy_of_model
+        copy_of_model = tf.keras.models.clone_model(self.model)
+        copy_of_model.set_weights(self.model.get_weights())
+        self.frozen_model = copy_of_model
 
 def main():
-    discount_rate = 0.99
-    epsilon = 0
-    updates_per_freeze = 1
-    dqn = DQN(discount_rate, epsilon, updates_per_freeze, render=False)
+    dqn = DQN(
+        discount_rate=0.99,
+        epsilon=0,
+        updates_per_freeze=5000,
+        policy_log_frequency=1,
+        render_frequency=25
+    )
     # TODO: make a param.
     while True:
         dqn.sample_episode()
