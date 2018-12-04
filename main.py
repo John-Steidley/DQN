@@ -46,10 +46,10 @@ def init_model():
     """
     # Weights are initialized using glorot_normal by default.
     model = tf.keras.models.Sequential([
-        tf.keras.layers.Dense(8, activation = 'hard_sigmoid', input_shape=(2,)),
+        tf.keras.layers.Dense(8, activation='hard_sigmoid', input_shape=(2,)),
         tf.keras.layers.Dense(3)
     ])
-    
+
     # After 100 episodes, have lr of .001.
     # lr_decay = .009/20000 # which is 4.5e-7
     optimizer = tf.keras.optimizers.SGD(lr=1e-3)
@@ -88,16 +88,17 @@ class DQN:
     2. Experience replay: We update from random experiences.
     3. Fixed Q targets: We hold the Q target constant for n steps.
     """
+
     def __init__(self, discount_rate, epsilon, updates_per_freeze, policy_log_frequency, render_frequency):
         # Future rewards for 1 step in the future are valued at
         # discount_rate * reward.
-        assert(discount_rate > 0 and discount_rate <= 1)
+        assert (discount_rate > 0 and discount_rate <= 1)
         self.discount_rate = discount_rate
 
         # We take a random action with probability epsilon.
         # Because we initialize our action-values optimistically (higher than
         # they will be after a few updates), we should not need an epsilon > 0.
-        assert(epsilon >= 0 and epsilon <=1)
+        assert (epsilon >= 0 and epsilon <= 1)
         self.epsilon = epsilon
 
         # Update the frozen model after updates_per_freeze steps.
@@ -122,11 +123,11 @@ class DQN:
     def normalize(self, observation):
         """TODO: normalize percisely using env state space."""
         return [observation[0] + .5, observation[1] * 15]
-    
+
     def get_action_values(self, model, observation):
         # Reshape the observation to be num_samples X num_inputs
         normalized = self.normalize(observation)
-        reshaped = np.array(normalized).reshape(1,2)
+        reshaped = np.array(normalized).reshape(1, 2)
         return model.predict(reshaped)[0]
 
     def get_action(self, observation):
@@ -135,7 +136,7 @@ class DQN:
         """
         rand_number = random.random()
         if rand_number < self.epsilon:
-            return self.env.action_space.sample()        
+            return self.env.action_space.sample()
         else:
             action_values = self.get_action_values(self.model, observation)
             # Note, neural network output values corrrespond to action indices.
@@ -183,7 +184,7 @@ class DQN:
             found_goal = bool(position >= self.goal_position)
             # logging.debug('action: {}, obs: {}, rew: {}, found_goal: {}'
             #              .format(action, observation, reward, found_goal))
-            
+
             # Store each experience.
             experience = Experience(initial_observation,
                                     action,
@@ -191,7 +192,7 @@ class DQN:
                                     observation,
                                     found_goal)
             self.experiences.append(experience)
-            
+
             if not found_goal and step < self.max_steps:
                 self.train_model(verbose=False)
                 self.updates_applied += 1
@@ -207,9 +208,9 @@ class DQN:
                 # Log the average number of steps to complete the episode.
                 self.sum_steps += step
                 self.num_episodes += 1
-                avg_steps =  self.sum_steps / self.num_episodes
+                avg_steps = self.sum_steps / self.num_episodes
                 logging.debug('Episode {} complete in {} steps. New step average {}'
-                             .format(self.num_episodes, step, avg_steps))
+                              .format(self.num_episodes, step, avg_steps))
                 break
 
         num_experiences = len(self.experiences)
@@ -231,14 +232,14 @@ class DQN:
 
         # For each experience, calculate the target based on the frozen model.
         mini_batch_ys = list(map(lambda i_el: self.calculate_targets(i_el[1],
-                                              verbose=(verbose and i_el[0] == 0)),
+                                                                     verbose=(verbose and i_el[0] == 0)),
                                  enumerate(batch_of_experiences)))
         xs = np.array(mini_batch_xs)
         ys = np.array(mini_batch_ys)
 
         # Occasionally log model training results.
         self.model.fit(xs, ys, verbose=int(verbose))
-        
+
     # TODO: Debug me, probabaly
     def calculate_targets(self, experience, verbose=False):
         """Make an update to the action-value based on the reward from one step."""
@@ -253,8 +254,8 @@ class DQN:
             target += discounted_future_reward
             if verbose:
                 logging.debug('q: {}, q_hat: {}, target: {}, old_obs: {}, new_obs: {}'
-                             .format(q_action_values, q_hat_action_values, target,
-                                     experience.old_observation, experience.new_observation))
+                              .format(q_action_values, q_hat_action_values, target,
+                                      experience.old_observation, experience.new_observation))
         # Set the action-value of the action that was taken to the target.
         # The other two action-values are not changed, resulting in 0 error for those actions.
         q_action_values[experience.action] = target
@@ -265,6 +266,7 @@ class DQN:
         copy_of_model = tf.keras.models.clone_model(self.model)
         copy_of_model.set_weights(self.model.get_weights())
         self.frozen_model = copy_of_model
+
 
 def main():
     dqn = DQN(
@@ -280,5 +282,5 @@ def main():
 
 
 if __name__ == '__main__':
-    #TODO: argparse
+    # TODO: argparse
     main()
