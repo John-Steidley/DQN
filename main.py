@@ -84,7 +84,7 @@ class DQN:
 
     Novel elements:
     1. Deep neural network for learning the action-value: It is hard to converge
-    when using function approximation, off-policy learning, and boostrapping.
+    when using function approximation, off-policy learning, and bootstrapping.
     2. Experience replay: We update from random experiences.
     3. Fixed Q targets: We hold the Q target constant for n steps.
     """
@@ -92,13 +92,13 @@ class DQN:
     def __init__(self, discount_rate, epsilon, updates_per_freeze, policy_log_frequency, render_frequency):
         # Future rewards for 1 step in the future are valued at
         # discount_rate * reward.
-        assert (discount_rate > 0 and discount_rate <= 1)
+        assert (0 < discount_rate <= 1)
         self.discount_rate = discount_rate
 
         # We take a random action with probability epsilon.
         # Because we initialize our action-values optimistically (higher than
         # they will be after a few updates), we should not need an epsilon > 0.
-        assert (epsilon >= 0 and epsilon <= 1)
+        assert (0 <= epsilon <= 1)
         self.epsilon = epsilon
 
         # Update the frozen model after updates_per_freeze steps.
@@ -121,7 +121,7 @@ class DQN:
         self.updates_applied = 0
 
     def normalize(self, observation):
-        """TODO: normalize percisely using env state space."""
+        """TODO: normalize precisely using env state space."""
         return [observation[0] + .5, observation[1] * 15]
 
     def get_action_values(self, model, observation):
@@ -139,7 +139,7 @@ class DQN:
             return self.env.action_space.sample()
         else:
             action_values = self.get_action_values(self.model, observation)
-            # Note, neural network output values corrrespond to action indices.
+            # Note, neural network output values correspond to action indices.
             # TODO: revisit to consider fewer forward passes.
             return get_index_of_max(action_values)
 
