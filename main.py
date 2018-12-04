@@ -240,7 +240,7 @@ class DQN:
         # Occasionally log model training results.
         self.model.fit(xs, ys, verbose=int(verbose))
 
-    # TODO: Debug me, probabaly
+    # TODO: Debug me, probably
     def calculate_targets(self, experience, verbose=False):
         """Make an update to the action-value based on the reward from one step."""
         # TODO: what should q_action_values be named, really?
