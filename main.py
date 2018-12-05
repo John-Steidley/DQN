@@ -90,6 +90,7 @@ class DQN:
     """
 
     def __init__(self, discount_rate, epsilon, updates_per_freeze, policy_log_frequency, render_frequency):
+        self.env = gym.make("MountainCar-v0")
         # Future rewards for 1 step in the future are valued at
         # discount_rate * reward.
         assert (0 < discount_rate <= 1)
@@ -111,7 +112,6 @@ class DQN:
 
         self.policy_log_frequency = policy_log_frequency
         self.render_frequency = render_frequency
-        self.env = gym.make("MountainCar-v0")
         self.goal_position = 0.5
         self.experiences = []
         self.experiences_per_train = 5
@@ -121,8 +121,14 @@ class DQN:
         self.updates_applied = 0
 
     def normalize(self, observation):
-        """TODO: normalize precisely using env state space."""
-        return [observation[0] + .5, observation[1] * 15]
+        # normalize using the env's observation space into the range of [-1, 1]^n
+        low = self.env.observation_space.low
+        high = self.env.observation_space.high
+        result = [(2.0 * (observation[i] - low[i])) / (high[i] - low[i]) - 1 for i in range(len(low))]
+        # TODO: Remove this assert once the code has run for a while
+        for i in range(len(result)):
+            assert (-1.0 <= result[i] <= 1.0)
+        return result
 
     def get_action_values(self, model, observation):
         # Reshape the observation to be num_samples X num_inputs
