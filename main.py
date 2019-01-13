@@ -26,6 +26,15 @@ import gym
 import numpy as np
 import tensorflow as tf
 
+# things that are different
+# layer norm
+# (FIXED) eps decay
+# amount of data before training
+# lr decay?
+# They use Adam, we use vanilla SGD
+# (FIXED) They had 64 neurons and Tanh activation (other non-mountaincar use 2 hidden layers)
+# Size of replay buffer
+
 # Note: can change to level=logging.info to eliminate most logs
 logging.basicConfig(level=logging.DEBUG, format='%(message)s')
 
@@ -46,7 +55,7 @@ def init_model():
     """
     # Weights are initialized using glorot_normal by default.
     model = tf.keras.models.Sequential([
-        tf.keras.layers.Dense(8, activation='hard_sigmoid', input_shape=(2,)),
+        tf.keras.layers.Dense(64, activation='tanh', input_shape=(2,)),
         tf.keras.layers.Dense(3)
     ])
 
@@ -89,7 +98,7 @@ class DQN:
     3. Fixed Q targets: We hold the Q target constant for n steps.
     """
 
-    def __init__(self, discount_rate, epsilon, updates_per_freeze, policy_log_frequency, render_frequency):
+    def __init__(self, discount_rate, initial_epsilon, final_epsilon, epsilon_decay_steps, updates_per_freeze, policy_log_frequency, render_frequency):
         self.env = gym.make("MountainCar-v0")
         # Future rewards for 1 step in the future are valued at
         # discount_rate * reward.
@@ -98,9 +107,15 @@ class DQN:
 
         # We take a random action with probability epsilon.
         # Because we initialize our action-values optimistically (higher than
-        # they will be after a few updates), we should not need an epsilon > 0.
-        assert (0 <= epsilon <= 1)
-        self.epsilon = epsilon
+        # they will be after a few updates), we should(?) not need an epsilon > 0.
+        assert (0 <= initial_epsilon <= 1)
+        assert (0 <= final_epsilon <= 1)
+        assert (0 < epsilon_decay_steps)
+        self.epsilon = initial_epsilon
+        self.initial_epsilon = initial_epsilon
+        self.final_epsilon = final_epsilon
+        self.epsilon_decay_steps = epsilon_decay_steps
+        self.total_steps_ever_taken = 0
 
         # Update the frozen model after updates_per_freeze steps.
         # updates_per_freeze can be > max_steps for the episode.
@@ -150,10 +165,10 @@ class DQN:
             return get_index_of_max(action_values)
 
     def log_policy(self):
-        logging.debug("Left-Right is position, higher is greater forward velocity, lower is greater backward velocity")
-        logging.debug("Displaying the current model's policy:")
+        logging.debug('Left-Right is position, higher is greater forward velocity, lower is greater backward velocity')
+        logging.debug('Displaying the current model\'s policy:')
         self.log_policy_for_model(self.model)
-        logging.debug("Displaying the frozen model's policy:")
+        logging.debug('Displaying the frozen model\'s policy:')
         self.log_policy_for_model(self.frozen_model)
 
     def log_policy_for_model(self, model):
@@ -168,12 +183,21 @@ class DQN:
                 row_string += str(action)
             logging.debug(row_string)
 
+    def decay_epsilon(self):
+        if self.total_steps_ever_taken > self.epsilon_decay_steps:
+            self.epsilon = self.final_epsilon
+            return
+        # we know that self.total_steps_ever_taken < self.epsilon_decay_steps
+        decay_per_step = (self.initial_epsilon - self.final_epsilon) / self.epsilon_decay_steps
+        self.epsilon = self.initial_epsilon - (self.total_steps_ever_taken * decay_per_step)
+
     def sample_episode(self):
         """Take an action given the policy, store the experience,
         and update the model.
         """
         observation = self.env.reset()
         for step in range(1, self.max_steps + 1):
+            self.total_steps_ever_taken += 1
             if self.num_episodes % self.render_frequency == 0:
                 self.env.render()
 
@@ -188,6 +212,7 @@ class DQN:
             observation, reward, _, _ = self.env.step(action)
             position = observation[0]
             found_goal = bool(position >= self.goal_position)
+            self.decay_epsilon()
             # logging.debug('action: {}, obs: {}, rew: {}, found_goal: {}'
             #              .format(action, observation, reward, found_goal))
 
@@ -217,6 +242,7 @@ class DQN:
                 avg_steps = self.sum_steps / self.num_episodes
                 logging.debug('Episode {} complete in {} steps. New step average {}'
                               .format(self.num_episodes, step, avg_steps))
+                logging.debug('Epsilon is {}'.format(self.epsilon))
                 break
 
         num_experiences = len(self.experiences)
@@ -277,8 +303,10 @@ class DQN:
 def main():
     dqn = DQN(
         discount_rate=0.99,
-        epsilon=0,
-        updates_per_freeze=5000,
+        initial_epsilon=1.0,
+        final_epsilon=0.02,
+        epsilon_decay_steps=20000,
+        updates_per_freeze=500,
         policy_log_frequency=1,
         render_frequency=25
     )
