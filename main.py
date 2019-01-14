@@ -98,7 +98,7 @@ class DQN:
     3. Fixed Q targets: We hold the Q target constant for n steps.
     """
 
-    def __init__(self, discount_rate, initial_epsilon, final_epsilon, epsilon_decay_steps, updates_per_freeze, policy_log_frequency, render_frequency):
+    def __init__(self, discount_rate, initial_epsilon, final_epsilon, epsilon_decay_steps, updates_per_freeze, policy_log_frequency, experiences_per_train, experience_cut_threshold, experiences_to_keep, render_frequency):
         self.env = gym.make("MountainCar-v0")
         # Future rewards for 1 step in the future are valued at
         # discount_rate * reward.
@@ -117,6 +117,9 @@ class DQN:
         self.epsilon_decay_steps = epsilon_decay_steps
         self.total_steps_ever_taken = 0
 
+        self.experience_cut_threshold = experience_cut_threshold
+        self.experiences_to_keep = experiences_to_keep
+
         # Update the frozen model after updates_per_freeze steps.
         # updates_per_freeze can be > max_steps for the episode.
         self.updates_per_freeze = updates_per_freeze
@@ -129,7 +132,7 @@ class DQN:
         self.render_frequency = render_frequency
         self.goal_position = 0.5
         self.experiences = []
-        self.experiences_per_train = 5
+        self.experiences_per_train = experiences_per_train
         self.max_steps = 200
         self.sum_steps = 0
         self.num_episodes = 0
@@ -173,6 +176,10 @@ class DQN:
 
     def log_policy_for_model(self, model):
         """Display the policy for debugging purposes."""
+        should_be_goodish = self.get_action_values(model, [0.4, 0.04])
+        logging.debug('goodish: {}'.format(should_be_goodish))
+        should_be_badish = self.get_action_values(model, [-0.52359, 0.0])
+        logging.debug('badish: {}'.format(should_be_badish))
         for velocity in reversed(range(-7, 8)):
             row_string = ''
             for position in range(-12, 7):
@@ -246,9 +253,8 @@ class DQN:
                 break
 
         num_experiences = len(self.experiences)
-        # Make experiences max size 1000
-        if num_experiences > 1000:
-            self.experiences = self.experiences[num_experiences - 1000:]
+        if num_experiences > self.experience_cut_threshold:
+            self.experiences = self.experiences[num_experiences - self.experiences_to_keep:]
         if self.num_episodes % self.policy_log_frequency == 0:
             self.log_policy()
 
@@ -302,12 +308,15 @@ class DQN:
 
 def main():
     dqn = DQN(
-        discount_rate=0.99,
+        discount_rate=1.0,
         initial_epsilon=1.0,
-        final_epsilon=0.02,
-        epsilon_decay_steps=20000,
+        final_epsilon=0.1,
+        epsilon_decay_steps=10000,
         updates_per_freeze=500,
-        policy_log_frequency=1,
+        policy_log_frequency=50,
+        experiences_per_train=32,
+        experience_cut_threshold=11000,
+        experiences_to_keep=10000,
         render_frequency=25
     )
     # TODO: make a param.
