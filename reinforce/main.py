@@ -65,10 +65,11 @@ class REINFORCE:
         with tf.variable_scope('model'):
             self.observation_placeholder = tf.placeholder(shape=(None, observation_dimension), dtype=tf.float32)
             self.output_layer = tf.layers.dense(self.observation_placeholder, units=action_dimension, activation='softmax')
-            self.discounted_return_placeholder = tf.placeholder(shape=(None, 1), dtype=tf.float32)
+            self.discounted_return_placeholder = tf.placeholder(shape=(None, 2), dtype=tf.float32)
+            
 
         self.loss = tf.multiply(-1.0, tf.multiply(tf.log(self.output_layer), self.discounted_return_placeholder))
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate=1e-2)
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate=1e-4)
         self.train_operation = optimizer.minimize(self.loss)
         self.session = tf.InteractiveSession()
         self.session.run(tf.global_variables_initializer())
@@ -76,43 +77,50 @@ class REINFORCE:
 
     def get_action(self, observation):
         # This depends on having only two choices for actions
-        # probs = self.session.run(self.output_layer, feed_dict={self.observation_placeholder: observation.reshape(1, -1)})[0]
-        # prob_zero, prob_one = probs
-        # rand_number = random.random()
-        # if rand_number < prob_zero:
-        #     return 0
-        # else:
-        #     return 1
-        # return self.env.action_space.sample()
-        thingy = observation[1] * -0.05 + observation[2]
-        if thingy > 0:
-            return 1
-        else:
+        probs = self.session.run(self.output_layer, feed_dict={self.observation_placeholder: observation.reshape(1, -1)})[0]
+        prob_zero, prob_one = probs
+        rand_number = random.random()
+        if rand_number < prob_zero:
             return 0
+        else:
+            return 1
+        return self.env.action_space.sample()
+        # thingy = observation[1] * -0.05 + observation[2]
+        # if thingy > 0:
+        #     return 1
+        # else:
+        #     return 0
 
-    def train_model(self, observations, rewards, verbose=False):
+    def train_model(self, observations, actions, rewards, verbose=False):
         if verbose:
             logging.debug('obs: {}, rew: {}'.format(observations, rewards))
 
+        assert(len(observations) == len(actions))
         assert(len(observations) == len(rewards))
         discounted_return = 0
-        for i, (obs, rew) in reversed(list(enumerate(zip(observations, rewards)))):
+        for i, ((obs, action), reward) in reversed(list(enumerate(zip(zip(observations, actions), rewards)))):
             # because we're going backwards, we can do this trick:
-            discounted_return = self.gamma * discounted_return + rew
+            discounted_return = self.gamma * discounted_return + reward
             discounted_return_array = np.array(discounted_return).reshape(1, 1)
-            self.session.run([self.loss, self.train_operation], feed_dict={self.observation_placeholder: obs.reshape(1, -1), self.discounted_return_placeholder: discounted_return_array})
+            action_array = np.array([1-action, action])
+            discounted_return_array = np.multiply(action_array, discounted_return_array)
+            # print('discounted return array', discounted_return_array)
+            self.session.run([self.loss, self.train_operation], feed_dict={
+                self.observation_placeholder: obs.reshape(1, -1), 
+                self.discounted_return_placeholder: discounted_return_array
+            })
 
 
     def sample_episode(self):
-        observations = []
-        rewards = []
+        observations, actions, rewards = [], [], []
         observation = self.env.reset()
         for step in range(1, self.max_steps + 1):
             if self.num_episodes % self.render_frequency == 0:
                 self.env.render()
 
-            action = self.get_action(observation)
             observations.append(observation)
+            action = self.get_action(observation)
+            actions.append(action)
             # The last variable, info, is always {}.
             observation, reward, done, _ = self.env.step(action)
             rewards.append(reward)
@@ -128,8 +136,12 @@ class REINFORCE:
         avg_steps = self.sum_steps / self.num_episodes
         logging.info('Episode {} complete in {} steps. New step average {}'
                         .format(self.num_episodes, step, avg_steps))
+        varses = tf.trainable_variables()
+        vars_vals = self.session.run(varses)
+        for var, val in zip(varses, vars_vals):
+            print('var:', var, 'val:', val)
         # Train and print info.
-        self.train_model(observations, rewards, verbose=True)
+        self.train_model(observations, actions, rewards, verbose=True)
 
 def main():
     pg = REINFORCE(gamma=1.0, render_frequency=1)
