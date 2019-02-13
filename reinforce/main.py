@@ -38,23 +38,25 @@ https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
 
 import logging
 import random
+import time
 
 import gym
 import numpy as np
 import tensorflow as tf
 
-logging.basicConfig(level=logging.DEBUG, format='%(message)s')
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 class REINFORCE:
 
-    def __init__(self, discount_rate, render_frequency):
-        self.env = gym.make("CartPole-v0")
+    def __init__(self, discount_rate, batch_size, render_frequency):
+        self.env = gym.make("CartPole-v1")
         self.init_model()
         self.sum_steps = 0
-        self.max_steps = 200
+        self.max_steps = 500
         self.num_episodes = 0
         self.render_frequency = render_frequency
         self.discount_rate = discount_rate
+        self.batch_size = batch_size
 
     def init_model(self):
         """Define the model and loss."""
@@ -83,7 +85,6 @@ class REINFORCE:
             return 0
         else:
             return 1
-        return self.env.action_space.sample()
 
     def human_policy(self, observation):
         thingy = observation[1] * -0.05 + observation[2]
@@ -96,27 +97,62 @@ class REINFORCE:
         varses = tf.trainable_variables()
         vars_vals = self.session.run(varses)        
         for var, val in zip(varses, vars_vals):
-            logging.info('var: {}, val: {}'.format(var, val))
+            logging.debug('var: {}, val: {}'.format(var, val))
 
-    def train_model(self, observations, actions, rewards, verbose=False):
-        if verbose:
-            logging.debug('obs: {}, rew: {}'.format(observations, rewards))
-
-        assert(len(observations) == len(actions))
-        assert(len(observations) == len(rewards))
+    def discounted_returns(self, rewards):
         discounted_return = 0
-        for i, ((obs, action), reward) in reversed(list(enumerate(zip(zip(observations, actions), rewards)))):
+        discounted_returns = []
+        for reward in reversed(rewards):
             # Because we're going backwards, we can do this trick:
             discounted_return = self.discount_rate * discounted_return + reward
-            discounted_return_array = np.array(discounted_return).reshape(1, 1)
-            action_array = np.array([1-action, action])
-            discounted_return_array = np.multiply(action_array, discounted_return_array)
-            self.session.run([self.loss, self.train_operation], feed_dict={
-                self.observation_placeholder: obs.reshape(1, -1), 
-                self.discounted_return_placeholder: discounted_return_array
-            })
+            discounted_returns.append(discounted_return)
+        return reversed(discounted_returns)
+        
+    def train_model(self, observations, actions, discounted_returns, verbose=False):
+        if verbose:
+            logging.debug('obs: {}, rew: {}'.format(observations, discounted_returns))
+
+        length = len(observations)
+        assert(length == len(actions))
+        assert(length == len(discounted_returns))
+        returns_array = np.array(discounted_returns)
+        returns_array = np.column_stack((returns_array, returns_array))
+        assert(returns_array.shape == (length, 2))
+
+        actions_array = np.array(actions)
+        actions_inverted = 1 - actions_array
+        actions_one_hot_array = np.column_stack((actions_array, actions_inverted))
+        assert(actions_one_hot_array.shape == (length, 2))
+
+        returns_by_action = np.multiply(actions_one_hot_array, returns_array)
+        
+        observations_array = np.array(observations)
+        batch_loss, _ = self.session.run([self.loss, self.train_operation], feed_dict={
+            self.observation_placeholder: observations_array, 
+            self.discounted_return_placeholder: returns_by_action
+        })
+        return batch_loss
+
+    def run_batch(self):
+        total_observations, total_actions, total_discounted_rewards, steps = [], [], [], []
+        while True:
+            observations, actions, discounted_rewards, step = self.sample_episode()
+            total_observations += observations
+            total_actions += actions
+            total_discounted_rewards += discounted_rewards
+            steps.append(step)
+            if (len(total_observations) >= self.batch_size):
+                break
+        
+        # Train and print info.
+        batch_loss = self.train_model(total_observations, total_actions, total_discounted_rewards, verbose=True)
+        # self.log_vars()
+        # Log the average number of steps to complete the episode.
+        logging.info('{} episodes complete. Average episode length: {}'
+                        .format(self.num_episodes, np.mean(np.array(steps))))
 
     def sample_episode(self):
+        self.num_episodes += 1
         observations, actions, rewards = [], [], []
         observation = self.env.reset()
         for step in range(1, self.max_steps + 1):
@@ -136,20 +172,14 @@ class REINFORCE:
             if done:
                 break
 
-        # Log the average number of steps to complete the episode.
-        self.num_episodes += 1
-        avg_steps = self.sum_steps / self.num_episodes
-        logging.info('Episode {} complete in {} steps. New step average {}'
-                        .format(self.num_episodes, step, avg_steps))
-        
-        # Train and print info.
-        self.train_model(observations, actions, rewards, verbose=True)
-        self.log_vars()
+        discounted_returns = self.discounted_returns(rewards)
+        return observations, actions, discounted_returns, step
+
 
 def main():
-    pg = REINFORCE(discount_rate=1.0, render_frequency=1)
+    pg = REINFORCE(discount_rate=1.0, batch_size=5000, render_frequency=1000)
     while True:
-        pg.sample_episode()
+        pg.run_batch()
 
 if __name__ == '__main__':
     main()
