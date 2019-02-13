@@ -1,4 +1,4 @@
-# Copyright John&Bill, Inc., 2018.
+# Copyright John&Bill, Inc., 2019.
 
 """Implement the REINFORCE model.
 
@@ -70,7 +70,7 @@ class REINFORCE:
             
         # Minimize the negative loss, which is equivalent to maximizing the return.
         self.loss = tf.multiply(-1.0, tf.multiply(tf.log(self.output_layer), self.discounted_return_placeholder))
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate=1e-4)
+        optimizer = tf.train.AdamOptimizer(learning_rate=1)
         self.train_operation = optimizer.minimize(self.loss)
         self.session = tf.InteractiveSession()
         self.session.run(tf.global_variables_initializer())
@@ -80,10 +80,19 @@ class REINFORCE:
         # TODO() This depends on having only two choices for actions
         probs = self.session.run(self.output_layer, feed_dict={self.observation_placeholder: observation.reshape(1, -1)})[0]
         prob_zero, prob_one = probs
+        if self.num_episodes % 1000 == 0:
+            if prob_zero > prob_one:
+                return 0
+            else:
+                return 1
         rand_number = random.random()
         if rand_number < prob_zero:
+            # if self.num_episodes % 1000 == 0:
+            #     print(probs, 'left')
             return 0
         else:
+            # if self.num_episodes % 1000 == 0:
+            #     print(probs, 'right')
             return 1
 
     def human_policy(self, observation):
@@ -97,7 +106,7 @@ class REINFORCE:
         varses = tf.trainable_variables()
         vars_vals = self.session.run(varses)        
         for var, val in zip(varses, vars_vals):
-            logging.debug('var: {}, val: {}'.format(var, val))
+            logging.info('var: {}, val: {}'.format(var, val))
 
     def discounted_returns(self, rewards):
         discounted_return = 0
@@ -121,11 +130,10 @@ class REINFORCE:
 
         actions_array = np.array(actions)
         actions_inverted = 1 - actions_array
-        actions_one_hot_array = np.column_stack((actions_array, actions_inverted))
+        actions_one_hot_array = np.column_stack((actions_inverted, actions_array))
         assert(actions_one_hot_array.shape == (length, 2))
 
-        returns_by_action = np.multiply(actions_one_hot_array, returns_array)
-        
+        returns_by_action = np.multiply(actions_one_hot_array, returns_array)        
         observations_array = np.array(observations)
         batch_loss, _ = self.session.run([self.loss, self.train_operation], feed_dict={
             self.observation_placeholder: observations_array, 
@@ -146,7 +154,7 @@ class REINFORCE:
         
         # Train and print info.
         batch_loss = self.train_model(total_observations, total_actions, total_discounted_rewards, verbose=True)
-        # self.log_vars()
+        self.log_vars()
         # Log the average number of steps to complete the episode.
         logging.info('{} episodes complete. Average episode length: {}'
                         .format(self.num_episodes, np.mean(np.array(steps))))
@@ -171,7 +179,8 @@ class REINFORCE:
             self.sum_steps += 1
             if done:
                 break
-
+        if self.num_episodes % 1000 == 0:
+            print('steps of magic episode:', step)
         discounted_returns = self.discounted_returns(rewards)
         return observations, actions, discounted_returns, step
 
