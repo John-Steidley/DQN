@@ -64,21 +64,27 @@ class REINFORCE:
         action_dimension = self.env.action_space.n
         with tf.variable_scope('model'):
             self.observation_placeholder = tf.placeholder(shape=(None, observation_dimension), dtype=tf.float32)
-            self.output_layer = tf.layers.dense(self.observation_placeholder, units=action_dimension, activation='softmax')
+            hidden_layer = tf.layers.dense(self.observation_placeholder, units=32, activation='tanh')
+            self.policy_probabilities = tf.layers.dense(hidden_layer, units=action_dimension, activation='softmax')
+            self.state_value = tf.layers.dense(hidden_layer, units=1, activation=None)
             # Set the return of the action that wasn't taken to 0.
-            self.discounted_return_placeholder = tf.placeholder(shape=(None, 2), dtype=tf.float32)
+            self.policy_target = tf.placeholder(shape=(None, 2), dtype=tf.float32)
+            self.value_target = tf.placeholder(shape=(None, 1), dtype=tf.float32)
             
         # Minimize the negative loss, which is equivalent to maximizing the return.
-        self.loss = tf.multiply(-1.0, tf.multiply(tf.log(self.output_layer), self.discounted_return_placeholder))
-        optimizer = tf.train.AdamOptimizer(learning_rate=1)
-        self.train_operation = optimizer.minimize(self.loss)
+        # TODO() add discount factor as suggested in sutton/bartow
+        policy_loss = tf.multiply(-1.0, tf.multiply(tf.log(self.policy_probabilities), self.policy_target))
+        value_loss = tf.losses.mean_squared_error(labels=self.value_target, predictions=self.state_value)
+        combined_loss = tf.add(tf.reduce_sum(policy_loss), value_loss)
+        optimizer = tf.train.AdamOptimizer(learning_rate=5e-3)
+        self.train_operation = optimizer.minimize(combined_loss)
         self.session = tf.InteractiveSession()
         self.session.run(tf.global_variables_initializer())
         
 
     def get_action(self, observation):
         # TODO() This depends on having only two choices for actions
-        probs = self.session.run(self.output_layer, feed_dict={self.observation_placeholder: observation.reshape(1, -1)})[0]
+        probs = self.session.run(self.policy_probabilities, feed_dict={self.observation_placeholder: observation.reshape(1, -1)})[0]
         prob_zero, prob_one = probs
         rand_number = random.random()
         if rand_number < prob_zero:
@@ -99,8 +105,8 @@ class REINFORCE:
         for var, val in zip(varses, vars_vals):
             logging.info('var: {}, val: {}'.format(var, val))
 
-    def discounted_returns(self, rewards):
-        discounted_return = 0
+    def discounted_returns(self, rewards, initial_return):
+        discounted_return = initial_return
         discounted_returns = []
         for reward in reversed(rewards):
             # Because we're going backwards, we can do this trick:
@@ -116,21 +122,21 @@ class REINFORCE:
         assert(length == len(actions))
         assert(length == len(discounted_returns))
         returns_array = np.array(discounted_returns)
-        returns_array = np.column_stack((returns_array, returns_array))
-        assert(returns_array.shape == (length, 2))
+        stacked_returns_array = np.column_stack((returns_array, returns_array))
+        assert(stacked_returns_array.shape == (length, 2))
 
         actions_array = np.array(actions)
         actions_inverted = 1 - actions_array
         actions_one_hot_array = np.column_stack((actions_inverted, actions_array))
         assert(actions_one_hot_array.shape == (length, 2))
 
-        returns_by_action = np.multiply(actions_one_hot_array, returns_array)        
+        policy_target = np.multiply(actions_one_hot_array, stacked_returns_array)        
         observations_array = np.array(observations)
-        batch_loss, _ = self.session.run([self.loss, self.train_operation], feed_dict={
+        self.session.run(self.train_operation, feed_dict={
             self.observation_placeholder: observations_array, 
-            self.discounted_return_placeholder: returns_by_action
+            self.policy_target: policy_target,
+            self.value_target: returns_array.reshape(-1, 1)
         })
-        return batch_loss
 
     def run_batch(self):
         total_observations, total_actions, total_discounted_rewards, steps = [], [], [], []
@@ -144,8 +150,8 @@ class REINFORCE:
                 break
         
         # Train and print info.
-        batch_loss = self.train_model(total_observations, total_actions, total_discounted_rewards, verbose=True)
-        self.log_vars()
+        self.train_model(total_observations, total_actions, total_discounted_rewards, verbose=True)
+        # self.log_vars()
         # Log the average number of steps to complete the episode.
         logging.info('{} episodes complete. Average episode length: {}'
                         .format(self.num_episodes, np.mean(np.array(steps))))
@@ -170,7 +176,14 @@ class REINFORCE:
             self.sum_steps += 1
             if done:
                 break
-        discounted_returns = self.discounted_returns(rewards)
+        is_terminal = step == self.max_steps
+        if is_terminal:
+            initial_return = 0
+        else:
+            initial_return = self.session.run(self.state_value, feed_dict: {
+                self.observation_placeholder: observation.reshape(1, -1)
+            })
+        discounted_returns = self.discounted_returns(rewards, initial_return)
         return observations, actions, discounted_returns, step
 
 
