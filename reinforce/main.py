@@ -80,19 +80,10 @@ class REINFORCE:
         # TODO() This depends on having only two choices for actions
         probs = self.session.run(self.output_layer, feed_dict={self.observation_placeholder: observation.reshape(1, -1)})[0]
         prob_zero, prob_one = probs
-        if self.num_episodes % 1000 == 0:
-            if prob_zero > prob_one:
-                return 0
-            else:
-                return 1
         rand_number = random.random()
         if rand_number < prob_zero:
-            # if self.num_episodes % 1000 == 0:
-            #     print(probs, 'left')
             return 0
         else:
-            # if self.num_episodes % 1000 == 0:
-            #     print(probs, 'right')
             return 1
 
     def human_policy(self, observation):
@@ -179,8 +170,6 @@ class REINFORCE:
             self.sum_steps += 1
             if done:
                 break
-        if self.num_episodes % 1000 == 0:
-            print('steps of magic episode:', step)
         discounted_returns = self.discounted_returns(rewards)
         return observations, actions, discounted_returns, step
 
