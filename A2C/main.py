@@ -63,28 +63,41 @@ class REINFORCE:
         observation_dimension = self.env.observation_space.shape[0]
         action_dimension = self.env.action_space.n
         with tf.variable_scope('model'):
-            self.observation_placeholder = tf.placeholder(shape=(None, observation_dimension), dtype=tf.float32)
-            hidden_layer = tf.layers.dense(self.observation_placeholder, units=32, activation='tanh')
-            self.policy_probabilities = tf.layers.dense(hidden_layer, units=action_dimension, activation='softmax')
+            self.observations = tf.placeholder(shape=(None, observation_dimension),
+                                                          dtype=tf.float32)
+            hidden_layer = tf.layers.dense(self.observations, units=32, activation='tanh')
+            self.policy_probabilities = tf.layers.dense(hidden_layer,
+                                                        units=action_dimension,
+                                                        activation='softmax')
             self.state_value = tf.layers.dense(hidden_layer, units=1, activation=None)
+            self.action_taken = tf.placeholder(shape=(None,), dtype=tf.int32)
             # Set the return of the action that wasn't taken to 0.
-            self.policy_target = tf.placeholder(shape=(None, 2), dtype=tf.float32)
-            self.value_target = tf.placeholder(shape=(None, 1), dtype=tf.float32)
-            
+            self.return_target = tf.placeholder(shape=(None, 1), dtype=tf.float32)
+
+        # stacked_returns_array = np.column_stack((returns_array, returns_array))
+        # assert(stacked_returns_array.shape == (length, 2))
+        # policy_target = np.multiply(actions_one_hot_array, stacked_returns_array)       
+
+        action_taken_one_hot = tf.one_hot(indices=self.action_taken, depth=2)
+        advantage = tf.subtract(self.return_target, self.state_value)
+        advantage_by_action = tf.multiply(action_taken_one_hot, advantage)
+
         # Minimize the negative loss, which is equivalent to maximizing the return.
         # TODO() add discount factor as suggested in sutton/bartow
-        policy_loss = tf.multiply(-1.0, tf.multiply(tf.log(self.policy_probabilities), self.policy_target))
-        value_loss = tf.losses.mean_squared_error(labels=self.value_target, predictions=self.state_value)
+        policy_loss = tf.multiply(-1.0, tf.multiply(tf.log(self.policy_probabilities),
+                                                    advantage_by_action))
+        value_loss = tf.losses.mean_squared_error(labels=self.return_target,
+                                                  predictions=self.state_value)
         combined_loss = tf.add(tf.reduce_sum(policy_loss), value_loss)
-        optimizer = tf.train.AdamOptimizer(learning_rate=5e-3)
+        optimizer = tf.train.AdamOptimizer(learning_rate=1e-2)
         self.train_operation = optimizer.minimize(combined_loss)
         self.session = tf.InteractiveSession()
         self.session.run(tf.global_variables_initializer())
-        
 
     def get_action(self, observation):
         # TODO() This depends on having only two choices for actions
-        probs = self.session.run(self.policy_probabilities, feed_dict={self.observation_placeholder: observation.reshape(1, -1)})[0]
+        probs = self.session.run(self.policy_probabilities, feed_dict={
+            self.observations:observation.reshape(1, -1)})[0]
         prob_zero, prob_one = probs
         rand_number = random.random()
         if rand_number < prob_zero:
@@ -121,21 +134,12 @@ class REINFORCE:
         length = len(observations)
         assert(length == len(actions))
         assert(length == len(discounted_returns))
-        returns_array = np.array(discounted_returns)
-        stacked_returns_array = np.column_stack((returns_array, returns_array))
-        assert(stacked_returns_array.shape == (length, 2))
-
-        actions_array = np.array(actions)
-        actions_inverted = 1 - actions_array
-        actions_one_hot_array = np.column_stack((actions_inverted, actions_array))
-        assert(actions_one_hot_array.shape == (length, 2))
-
-        policy_target = np.multiply(actions_one_hot_array, stacked_returns_array)        
+        returns_array = np.array(discounted_returns) 
         observations_array = np.array(observations)
         self.session.run(self.train_operation, feed_dict={
-            self.observation_placeholder: observations_array, 
-            self.policy_target: policy_target,
-            self.value_target: returns_array.reshape(-1, 1)
+            self.observations: observations_array, 
+            self.return_target: returns_array.reshape(-1, 1),
+            self.action_taken: np.array(actions)
         })
 
     def run_batch(self):
@@ -180,9 +184,9 @@ class REINFORCE:
         if is_terminal:
             initial_return = 0
         else:
-            initial_return = self.session.run(self.state_value, feed_dict: {
-                self.observation_placeholder: observation.reshape(1, -1)
-            })
+            initial_return = self.session.run(self.state_value, feed_dict={
+                self.observations: observation.reshape(1, -1)
+            })[0][0]
         discounted_returns = self.discounted_returns(rewards, initial_return)
         return observations, actions, discounted_returns, step
 
