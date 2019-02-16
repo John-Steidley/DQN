@@ -1,6 +1,6 @@
 # Copyright John&Bill, Inc., 2019.
 
-"""Implement the A2C model.
+"""Implement the PPO model.
 
 Currently implemented on the Cart-Pole environment.
 https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py
@@ -46,17 +46,19 @@ import tensorflow as tf
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-class A2C:
+class PPO:
 
-    def __init__(self, discount_rate, batch_size, render_frequency):
+    def __init__(self, discount_rate, batch_size, epsilon, learning_rate, render_frequency):
         self.env = gym.make("CartPole-v1")
-        self.init_model()
         self.sum_steps = 0
         self.max_steps = 500
         self.num_episodes = 0
-        self.render_frequency = render_frequency
         self.discount_rate = discount_rate
         self.batch_size = batch_size
+        self.epsilon = epsilon
+        self.learning_rate = learning_rate
+        self.render_frequency = render_frequency
+        self.init_model()
 
     def init_model(self):
         """Define the model and loss."""
@@ -69,27 +71,30 @@ class A2C:
             self.policy_probabilities = tf.layers.dense(hidden_layer,
                                                         units=action_dimension,
                                                         activation='softmax')
+            self.old_policy_probabilities = tf.placeholder(shape=(None, action_dimension),
+                                                           dtype=tf.float32)
             self.state_value = tf.layers.dense(hidden_layer, units=1, activation=None)
             self.action_taken = tf.placeholder(shape=(None,), dtype=tf.int32)
             # Set the return of the action that wasn't taken to 0.
             self.return_target = tf.placeholder(shape=(None, 1), dtype=tf.float32)
-
-        # stacked_returns_array = np.column_stack((returns_array, returns_array))
-        # assert(stacked_returns_array.shape == (length, 2))
-        # policy_target = np.multiply(actions_one_hot_array, stacked_returns_array)       
 
         action_taken_one_hot = tf.one_hot(indices=self.action_taken, depth=2)
         advantage = tf.subtract(self.return_target, self.state_value)
         advantage_by_action = tf.multiply(action_taken_one_hot, advantage)
 
         # Minimize the negative loss, which is equivalent to maximizing the return.
-        # TODO() add discount factor as suggested in sutton/bartow
-        policy_loss = tf.multiply(-1.0, tf.multiply(tf.log(self.policy_probabilities),
-                                                    advantage_by_action))
+        policy_ratio = tf.realdiv(self.policy_probabilities, self.old_policy_probabilities)
+        unclipped_weighted_advantage = tf.reduce_sum(tf.multiply(policy_ratio, advantage_by_action))
+        clipped_policy_ratio = tf.clip_by_value(policy_ratio, 1 - self.epsilon, 1 + self.epsilon)
+        clipped_weighted_advantage = tf.reduce_sum(tf.multiply(clipped_policy_ratio, 
+                                                               advantage_by_action))
+        assert(unclipped_weighted_advantage.shape == clipped_weighted_advantage.shape)
+        min_weighted_advantage = tf.minimum(unclipped_weighted_advantage, clipped_weighted_advantage)
+        policy_loss = tf.multiply(-1.0, min_weighted_advantage)
         value_loss = tf.losses.mean_squared_error(labels=self.return_target,
                                                   predictions=self.state_value)
-        combined_loss = tf.add(tf.reduce_sum(policy_loss), value_loss)
-        optimizer = tf.train.AdamOptimizer(learning_rate=1e-2)
+        combined_loss = tf.add(policy_loss, value_loss)
+        optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.train_operation = optimizer.minimize(combined_loss)
         self.session = tf.InteractiveSession()
         self.session.run(tf.global_variables_initializer())
@@ -101,9 +106,9 @@ class A2C:
         prob_zero, prob_one = probs
         rand_number = random.random()
         if rand_number < prob_zero:
-            return 0
+            return 0, probs
         else:
-            return 1
+            return 1, probs
 
     def human_policy(self, observation):
         thingy = observation[1] * -0.05 + observation[2]
@@ -127,7 +132,8 @@ class A2C:
             discounted_returns.append(discounted_return)
         return reversed(discounted_returns)
         
-    def train_model(self, observations, actions, discounted_returns, verbose=False):
+    def train_model(self, observations, actions, discounted_returns, old_policy_probabilities,
+                    verbose=False):
         if verbose:
             logging.debug('obs: {}, rew: {}'.format(observations, discounted_returns))
 
@@ -139,22 +145,29 @@ class A2C:
         self.session.run(self.train_operation, feed_dict={
             self.observations: observations_array, 
             self.return_target: returns_array.reshape(-1, 1),
-            self.action_taken: np.array(actions)
+            self.action_taken: np.array(actions),
+            self.old_policy_probabilities: np.array(old_policy_probabilities)
         })
 
     def run_batch(self):
-        total_observations, total_actions, total_discounted_rewards, steps = [], [], [], []
+        total_observations = []
+        total_actions = []
+        total_discounted_rewards = []
+        steps = []
+        total_policy_probabilities = []
         while True:
-            observations, actions, discounted_rewards, step = self.sample_episode()
-            total_observations += observations
-            total_actions += actions
-            total_discounted_rewards += discounted_rewards
+            obs, act, reward, step, policy_probs = self.sample_episode()
+            total_observations += obs
+            total_actions += act
+            total_discounted_rewards += reward
             steps.append(step)
+            total_policy_probabilities += policy_probs
             if (len(total_observations) >= self.batch_size):
                 break
         
         # Train and print info.
-        self.train_model(total_observations, total_actions, total_discounted_rewards, verbose=True)
+        self.train_model(total_observations, total_actions, total_discounted_rewards, 
+                         total_policy_probabilities, verbose=True)
         # self.log_vars()
         # Log the average number of steps to complete the episode.
         logging.info('{} episodes complete. Average episode length: {}'
@@ -162,15 +175,16 @@ class A2C:
 
     def sample_episode(self):
         self.num_episodes += 1
-        observations, actions, rewards = [], [], []
+        observations, actions, rewards, policy_probabilities = [], [], [], []
         observation = self.env.reset()
         for step in range(1, self.max_steps + 1):
             if self.num_episodes % self.render_frequency == 0:
                 self.env.render()
 
             observations.append(observation)
-            action = self.get_action(observation)
+            action, probs = self.get_action(observation)
             actions.append(action)
+            policy_probabilities.append(probs)
             # The last variable, info, is always {}.
             observation, reward, done, _ = self.env.step(action)
             rewards.append(reward)
@@ -188,11 +202,11 @@ class A2C:
                 self.observations: observation.reshape(1, -1)
             })[0][0]
         discounted_returns = self.discounted_returns(rewards, initial_return)
-        return observations, actions, discounted_returns, step
+        return observations, actions, discounted_returns, step, policy_probabilities
 
 
 def main():
-    pg = A2C(discount_rate=1.0, batch_size=5000, render_frequency=1000)
+    pg = PPO(discount_rate=1.0, batch_size=5000, epsilon=0.2, learning_rate=1e-2, render_frequency=1000)
     while True:
         pg.run_batch()
 
