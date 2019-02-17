@@ -84,16 +84,18 @@ class PPO:
 
         # Minimize the negative loss, which is equivalent to maximizing the return.
         policy_ratio = tf.realdiv(self.policy_probabilities, self.old_policy_probabilities)
-        unclipped_weighted_advantage = tf.reduce_sum(tf.multiply(policy_ratio, advantage_by_action))
+        unclipped_weighted_advantage = tf.reduce_sum(tf.multiply(policy_ratio, advantage_by_action),
+                                                     axis=1, keepdims=True)
         clipped_policy_ratio = tf.clip_by_value(policy_ratio, 1 - self.epsilon, 1 + self.epsilon)
         clipped_weighted_advantage = tf.reduce_sum(tf.multiply(clipped_policy_ratio, 
-                                                               advantage_by_action))
-        assert(unclipped_weighted_advantage.shape == clipped_weighted_advantage.shape)
+                                                               advantage_by_action),
+                                                   axis=1, keepdims=True)
         min_weighted_advantage = tf.minimum(unclipped_weighted_advantage, clipped_weighted_advantage)
-        policy_loss = tf.multiply(-1.0, min_weighted_advantage)
+        policy_loss = tf.reduce_mean(tf.multiply(-1.0, min_weighted_advantage))
         value_loss = tf.losses.mean_squared_error(labels=self.return_target,
                                                   predictions=self.state_value)
         combined_loss = tf.add(policy_loss, value_loss)
+        self.print_op = tf.print("value", value_loss, "policy", policy_loss)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.train_operation = optimizer.minimize(combined_loss)
         self.session = tf.InteractiveSession()
@@ -142,7 +144,7 @@ class PPO:
         assert(length == len(discounted_returns))
         returns_array = np.array(discounted_returns) 
         observations_array = np.array(observations)
-        self.session.run(self.train_operation, feed_dict={
+        self.session.run([self.train_operation, self.print_op], feed_dict={
             self.observations: observations_array, 
             self.return_target: returns_array.reshape(-1, 1),
             self.action_taken: np.array(actions),
@@ -194,13 +196,14 @@ class PPO:
             self.sum_steps += 1
             if done:
                 break
-        is_terminal = step == self.max_steps
+        is_terminal = step != self.max_steps
         if is_terminal:
             initial_return = 0
         else:
             initial_return = self.session.run(self.state_value, feed_dict={
                 self.observations: observation.reshape(1, -1)
             })[0][0]
+            print(initial_return)
         discounted_returns = self.discounted_returns(rewards, initial_return)
         return observations, actions, discounted_returns, step, policy_probabilities
 
