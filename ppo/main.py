@@ -49,9 +49,12 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 class PPO:
 
     def __init__(self, discount_rate, batch_size, epsilon, learning_rate, render_frequency):
-        self.env = gym.make("CartPole-v1")
+        self.env = gym.make("Pendulum-v0")
+        self.observation_dimension = self.env.observation_space.shape[0]
+        # self.action_dimension = self.env.action_space.n
+        self.action_dimension = 9
         self.sum_steps = 0
-        self.max_steps = 500
+        self.max_steps = self.env.spec.max_episode_steps
         self.num_episodes = 0
         self.discount_rate = discount_rate
         self.batch_size = batch_size
@@ -62,23 +65,21 @@ class PPO:
 
     def init_model(self):
         """Define the model and loss."""
-        observation_dimension = self.env.observation_space.shape[0]
-        action_dimension = self.env.action_space.n
         with tf.variable_scope('model'):
-            self.observations = tf.placeholder(shape=(None, observation_dimension),
-                                                          dtype=tf.float32)
+            self.observations = tf.placeholder(shape=(None, self.observation_dimension),
+                                               dtype=tf.float32)
             hidden_layer = tf.layers.dense(self.observations, units=32, activation='tanh')
             self.policy_probabilities = tf.layers.dense(hidden_layer,
-                                                        units=action_dimension,
+                                                        units=self.action_dimension,
                                                         activation='softmax')
-            self.old_policy_probabilities = tf.placeholder(shape=(None, action_dimension),
+            self.old_policy_probabilities = tf.placeholder(shape=(None, self.action_dimension),
                                                            dtype=tf.float32)
             self.state_value = tf.layers.dense(hidden_layer, units=1, activation=None)
             self.action_taken = tf.placeholder(shape=(None,), dtype=tf.int32)
             # Set the return of the action that wasn't taken to 0.
             self.return_target = tf.placeholder(shape=(None, 1), dtype=tf.float32)
 
-        action_taken_one_hot = tf.one_hot(indices=self.action_taken, depth=2)
+        action_taken_one_hot = tf.one_hot(indices=self.action_taken, depth=self.action_dimension)
         advantage = tf.subtract(self.return_target, self.state_value)
         advantage_by_action = tf.multiply(action_taken_one_hot, advantage)
 
@@ -100,15 +101,10 @@ class PPO:
         self.session.run(tf.global_variables_initializer())
 
     def get_action(self, observation):
-        # TODO() This depends on having only two choices for actions
         probs = self.session.run(self.policy_probabilities, feed_dict={
             self.observations:observation.reshape(1, -1)})[0]
-        prob_zero, prob_one = probs
-        rand_number = random.random()
-        if rand_number < prob_zero:
-            return 0, probs
-        else:
-            return 1, probs
+        action_index = np.random.choice(self.action_dimension, size=1, p=probs)[0]
+        return action_index, probs
 
     def human_policy(self, observation):
         thingy = observation[1] * -0.05 + observation[2]
@@ -130,7 +126,7 @@ class PPO:
             # Because we're going backwards, we can do this trick:
             discounted_return = self.discount_rate * discounted_return + reward
             discounted_returns.append(discounted_return)
-        return reversed(discounted_returns)
+        return list(reversed(discounted_returns))
         
     def train_model(self, observations, actions, discounted_returns, old_policy_probabilities,
                     verbose=False):
@@ -140,7 +136,7 @@ class PPO:
         length = len(observations)
         assert(length == len(actions))
         assert(length == len(discounted_returns))
-        returns_array = np.array(discounted_returns) 
+        returns_array = np.array(discounted_returns)
         observations_array = np.array(observations)
         self.session.run(self.train_operation, feed_dict={
             self.observations: observations_array, 
@@ -153,6 +149,7 @@ class PPO:
         total_observations = []
         total_actions = []
         total_discounted_rewards = []
+        episode_rewards = []
         steps = []
         total_policy_probabilities = []
         while True:
@@ -160,6 +157,7 @@ class PPO:
             total_observations += obs
             total_actions += act
             total_discounted_rewards += reward
+            episode_rewards.append(reward[0])
             steps.append(step)
             total_policy_probabilities += policy_probs
             if (len(total_observations) >= self.batch_size):
@@ -170,8 +168,8 @@ class PPO:
                          total_policy_probabilities, verbose=True)
         # self.log_vars()
         # Log the average number of steps to complete the episode.
-        logging.info('{} episodes complete. Average episode length: {}'
-                        .format(self.num_episodes, np.mean(np.array(steps))))
+        logging.info('{} episodes complete. Average episode length: {}, average reward: {}'
+                        .format(self.num_episodes, np.mean(np.array(steps)), np.mean(np.array(episode_rewards))))
 
     def sample_episode(self):
         self.num_episodes += 1
@@ -182,13 +180,13 @@ class PPO:
                 self.env.render()
 
             observations.append(observation)
-            action, probs = self.get_action(observation)
-            actions.append(action)
+            action_index, probs = self.get_action(observation)
+            action = -2.0 + (4 / (self.action_dimension - 1)) * action_index
+            actions.append(action_index)
             policy_probabilities.append(probs)
             # The last variable, info, is always {}.
-            observation, reward, done, _ = self.env.step(action)
+            observation, reward, done, _ = self.env.step(np.array([action]))
             rewards.append(reward)
-            succeeded = step >= self.max_steps
             logging.debug('action: {}, obs: {}, rew: {}, done: {}'
                          .format(action, observation, reward, done))
             self.sum_steps += 1
