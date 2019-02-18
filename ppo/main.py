@@ -41,6 +41,9 @@ import random
 import time
 
 import gym
+import matplotlib as mpl
+mpl.use('TkAgg')
+import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 
@@ -48,16 +51,19 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 class PPO:
 
-    def __init__(self, discount_rate, batch_size, epsilon, learning_rate, render_frequency):
+    def __init__(self, discount_rate, batch_size, epsilon, learning_rate, training_iterations, plot_frequency, render_frequency):
         self.env = gym.make("CartPole-v1")
         self.sum_steps = 0
         self.max_steps = 500
         self.num_episodes = 0
+        self.batches_run = 0
         self.discount_rate = discount_rate
         self.batch_size = batch_size
         self.epsilon = epsilon
         self.learning_rate = learning_rate
+        self.training_iterations = training_iterations
         self.render_frequency = render_frequency
+        self.plot_frequency = plot_frequency
         self.init_model()
 
     def init_model(self):
@@ -91,11 +97,25 @@ class PPO:
                                                                advantage_by_action),
                                                    axis=1, keepdims=True)
         min_weighted_advantage = tf.minimum(unclipped_weighted_advantage, clipped_weighted_advantage)
+
+        # for logging
+        min_min_weighted_adv = tf.reduce_min(min_weighted_advantage)
+        max_min_weighted_adv = tf.reduce_max(min_weighted_advantage)
+        min_state_value = tf.reduce_min(self.state_value)
+        max_state_value = tf.reduce_max(self.state_value)
+        
         policy_loss = tf.reduce_mean(tf.multiply(-1.0, min_weighted_advantage))
-        value_loss = tf.losses.mean_squared_error(labels=self.return_target,
-                                                  predictions=self.state_value)
+        value_loss = tf.multiply(0.01, tf.losses.mean_squared_error(labels=self.return_target,
+                                                  predictions=self.state_value))
         combined_loss = tf.add(policy_loss, value_loss)
-        self.print_op = tf.print("value", value_loss, "policy", policy_loss)
+        self.print_op = tf.print(
+            "min_state_value", min_state_value,
+            "\nmax_state_value", max_state_value,
+            "\nvalue loss:", value_loss,
+            "\npolicy loss", policy_loss,
+            "\nmin_min_weighted_advantage", min_min_weighted_adv,
+            "\nmax_min_weighted_advantage", max_min_weighted_adv,
+            "\ncombined_loss", combined_loss)
         optimizer = tf.train.AdamOptimizer(learning_rate=self.learning_rate)
         self.train_operation = optimizer.minimize(combined_loss)
         self.session = tf.InteractiveSession()
@@ -144,14 +164,16 @@ class PPO:
         assert(length == len(discounted_returns))
         returns_array = np.array(discounted_returns) 
         observations_array = np.array(observations)
-        self.session.run([self.train_operation, self.print_op], feed_dict={
-            self.observations: observations_array, 
-            self.return_target: returns_array.reshape(-1, 1),
-            self.action_taken: np.array(actions),
-            self.old_policy_probabilities: np.array(old_policy_probabilities)
-        })
+        for _ in range(self.training_iterations):
+            self.session.run([self.train_operation, self.print_op], feed_dict={
+                self.observations: observations_array, 
+                self.return_target: returns_array.reshape(-1, 1),
+                self.action_taken: np.array(actions),
+                self.old_policy_probabilities: np.array(old_policy_probabilities)
+            })
 
     def run_batch(self):
+        self.batches_run += 1
         total_observations = []
         total_actions = []
         total_discounted_rewards = []
@@ -172,15 +194,20 @@ class PPO:
                          total_policy_probabilities, verbose=True)
         # self.log_vars()
         # Log the average number of steps to complete the episode.
-        logging.info('{} episodes complete. Average episode length: {}'
+        logging.info('{} episodes complete. Average episode length: {}\n'
                         .format(self.num_episodes, np.mean(np.array(steps))))
+
+    def plot(self, label, ys):
+        plt.plot(ys)
+        plt.ylabel(label)
+        plt.show()
 
     def sample_episode(self):
         self.num_episodes += 1
         observations, actions, rewards, policy_probabilities = [], [], [], []
         observation = self.env.reset()
         for step in range(1, self.max_steps + 1):
-            if self.num_episodes % self.render_frequency == 0:
+            if self.render_frequency != -1 and self.num_episodes % self.render_frequency == 0:
                 self.env.render()
 
             observations.append(observation)
@@ -203,13 +230,17 @@ class PPO:
             initial_return = self.session.run(self.state_value, feed_dict={
                 self.observations: observation.reshape(1, -1)
             })[0][0]
-            print(initial_return)
         discounted_returns = self.discounted_returns(rewards, initial_return)
+        if self.plot_frequency != -1 and self.num_episodes % self.plot_frequency == 0:
+            state_values = self.session.run(self.state_value, feed_dict={
+                self.observations: observations
+            })
+            self.plot('state_values', state_values)
         return observations, actions, discounted_returns, step, policy_probabilities
 
 
 def main():
-    pg = PPO(discount_rate=1.0, batch_size=5000, epsilon=0.2, learning_rate=1e-2, render_frequency=1000)
+    pg = PPO(discount_rate=1.0, batch_size=5000, epsilon=0.2, learning_rate=1e-2, training_iterations=80, plot_frequency=-1, render_frequency=-1)
     while True:
         pg.run_batch()
 
